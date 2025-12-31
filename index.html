@@ -1,0 +1,406 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>EV SoC Calculator</title>
+    <link
+      rel="stylesheet"
+      href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css"
+    />
+    <style>
+      .full-charge-row {
+        background-color: rgba(40, 167, 69, 0.15);
+        font-weight: bold;
+        border-left: 5px solid #28a745;
+      }
+      #customRateGroup {
+        display: none;
+      }
+      td,
+      th {
+        font-size: 0.9rem;
+      }
+      article > footer {
+        padding: 0;
+        overflow: hidden;
+      }
+      article > footer > table {
+        margin-bottom: 0;
+        width: 100%;
+      }
+      article > footer > table th,
+      article > footer > table td {
+        padding: 0.75rem;
+      }
+    </style>
+  </head>
+  <body>
+    <main class="container">
+      <article>
+        <header>
+          <hgroup>
+            <h1>EV SoC Calculator</h1>
+            <p>Estimate your EV's State of Charge over time</p>
+          </hgroup>
+        </header>
+
+        <form id="chargeForm">
+          <div class="grid">
+            <div>
+              <label for="vehicleSelect">Vehicle Model</label>
+              <select id="vehicleSelect"></select>
+            </div>
+
+            <div>
+              <label for="currentSoc">Current Charge (%)</label>
+              <input
+                type="number"
+                id="currentSoc"
+                placeholder="0"
+                min="0"
+                max="100"
+              />
+            </div>
+          </div>
+
+          <div class="grid">
+            <div>
+              <label for="chargeRateSelect">Charge Rate</label>
+              <select id="chargeRateSelect" onchange="toggleCustomRate()">
+                <option value="1.2">1.2 kW (Level 1)</option>
+                <option value="7.2">7.2 kW (Level 2 / 40A)</option>
+                <option value="9.6" selected>9.6 kW (Level 2 / 50A)</option>
+                <option value="11.5">11.5 kW (Level 2 / 60A)</option>
+                <option value="custom">Custom...</option>
+              </select>
+            </div>
+
+            <div id="customRateGroup">
+              <label for="customRateInput">Enter Custom Rate (kW)</label>
+              <input
+                type="number"
+                id="customRateInput"
+                step="0.1"
+                placeholder="e.g. 150"
+              />
+            </div>
+          </div>
+
+          <details>
+            <summary>More Options</summary>
+            <div class="grid">
+              <div>
+                <label for="pricePerKwh">Price per kWh ($)</label>
+                <input
+                  type="number"
+                  id="pricePerKwh"
+                  step="0.01"
+                  placeholder="e.g. 0.12"
+                  min="0"
+                />
+              </div>
+              <div>
+                <label for="startTimeInput">Start Time</label>
+                <input type="time" id="startTimeInput" />
+              </div>
+            </div>
+          </details>
+
+          <button type="button" onclick="handleManualCalculate()">
+            Calculate Estimation
+          </button>
+        </form>
+
+        <footer>
+          <table role="grid" id="resultTable">
+            <thead>
+              <tr id="headerRow">
+                <th scope="col">Time</th>
+                <th scope="col">Level</th>
+                <th scope="col">Energy</th>
+                <th scope="col">Range</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td
+                  colspan="4"
+                  style="text-align: center; color: var(--pico-muted-color)"
+                >
+                  Adjust settings and click Calculate.
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </footer>
+      </article>
+      <small style="text-align: center; margin-top: 1rem">
+        Rivian, please add charge estimation to the native app
+        <br />
+        <a
+          href="mailto:cameron.cm6@gmail.com?subject=EV%20SoC%20Calculator%20Feedback"
+        >
+          Feedback
+        </a>
+        -
+        <a href="https://github.com/cameronmoreau/ev-soc-calculator">
+          Github
+        </a>
+      </small>
+    </main>
+
+    <script>
+      // Vehicle definitions - add new vehicles here
+      const vehicleData = {
+        RivianStandard: { name: "Rivian Standard", capacity: 106, range: 258 },
+        RivianStandardPlus: {
+          name: "Rivian Standard+",
+          capacity: 121,
+          range: 315,
+        },
+        RivianLarge: { name: "Rivian Large", capacity: 131, range: 329 },
+        RivianMax: { name: "Rivian Max", capacity: 141, range: 371 },
+        LucidAirTouring: {
+          name: "Lucid Air Touring",
+          capacity: 92,
+          range: 418,
+        },
+      };
+
+      function populateVehicleSelect(selectedKey) {
+        const select = document.getElementById("vehicleSelect");
+        select.innerHTML = "";
+        for (const [key, vehicle] of Object.entries(vehicleData)) {
+          const option = document.createElement("option");
+          option.value = key;
+          option.textContent = `${vehicle.name} (${vehicle.capacity} kWh / ${vehicle.range} mi)`;
+          if (key === selectedKey) option.selected = true;
+          select.appendChild(option);
+        }
+      }
+
+      document.addEventListener("DOMContentLoaded", () => {
+        populateVehicleSelect("RivianLarge");
+        loadState();
+      });
+
+      function toggleCustomRate() {
+        const select = document.getElementById("chargeRateSelect");
+        const customGroup = document.getElementById("customRateGroup");
+
+        if (select.value === "custom") {
+          customGroup.style.display = "block";
+          if (document.activeElement === select) {
+            document.getElementById("customRateInput").focus();
+          }
+        } else {
+          customGroup.style.display = "none";
+        }
+      }
+
+      function formatTime(dateObj) {
+        return dateObj.toLocaleTimeString([], {
+          hour: "numeric",
+          minute: "2-digit",
+        });
+      }
+
+      function formatTimeInput(dateObj) {
+        const hours = String(dateObj.getHours()).padStart(2, "0");
+        const minutes = String(dateObj.getMinutes()).padStart(2, "0");
+        return `${hours}:${minutes}`;
+      }
+
+      function handleManualCalculate() {
+        const startTimeInput = document.getElementById("startTimeInput").value;
+        let startTime;
+
+        if (startTimeInput) {
+          const [hours, minutes] = startTimeInput.split(":").map(Number);
+          startTime = new Date();
+          startTime.setHours(hours, minutes, 0, 0);
+        } else {
+          startTime = new Date();
+        }
+
+        calculateCharge(startTime, true);
+      }
+
+      function saveState(timestamp) {
+        const state = {
+          vehicleSelect: document.getElementById("vehicleSelect").value,
+          currentSoc: document.getElementById("currentSoc").value,
+          chargeRateSelect: document.getElementById("chargeRateSelect").value,
+          customRateInput: document.getElementById("customRateInput").value,
+          pricePerKwh: document.getElementById("pricePerKwh").value,
+          startTimeInput: document.getElementById("startTimeInput").value,
+          generatedAt: timestamp.toISOString(),
+        };
+        sessionStorage.setItem("evCalcSession", JSON.stringify(state));
+      }
+
+      function loadState() {
+        const saved = sessionStorage.getItem("evCalcSession");
+        if (saved) {
+          const state = JSON.parse(saved);
+
+          if (state.vehicleSelect && vehicleData[state.vehicleSelect]) {
+            document.getElementById("vehicleSelect").value =
+              state.vehicleSelect;
+          }
+          if (state.currentSoc)
+            document.getElementById("currentSoc").value = state.currentSoc;
+          if (state.chargeRateSelect)
+            document.getElementById("chargeRateSelect").value =
+              state.chargeRateSelect;
+          if (state.customRateInput)
+            document.getElementById("customRateInput").value =
+              state.customRateInput;
+          if (state.pricePerKwh)
+            document.getElementById("pricePerKwh").value = state.pricePerKwh;
+
+          document.getElementById("startTimeInput").value = state.startTimeInput
+            ? state.startTimeInput
+            : formatTimeInput(new Date());
+
+          toggleCustomRate();
+
+          if (state.generatedAt) {
+            const originalTime = new Date(state.generatedAt);
+            calculateCharge(originalTime, false);
+          }
+        } else {
+          document.getElementById("startTimeInput").value = formatTimeInput(
+            new Date()
+          );
+        }
+      }
+
+      function calculateCharge(startTime, shouldSave) {
+        const vehicleKey = document.getElementById("vehicleSelect").value;
+        const capacity = vehicleData[vehicleKey].capacity;
+        const maxRange = vehicleData[vehicleKey].range;
+
+        let startSoc = parseFloat(document.getElementById("currentSoc").value);
+        if (isNaN(startSoc)) startSoc = 0;
+        if (startSoc > 100) startSoc = 100;
+
+        const rateSelect = document.getElementById("chargeRateSelect").value;
+        let chargeRate = 0;
+
+        if (rateSelect === "custom") {
+          chargeRate = parseFloat(
+            document.getElementById("customRateInput").value
+          );
+        } else {
+          chargeRate = parseFloat(rateSelect);
+        }
+
+        if (isNaN(chargeRate) || chargeRate <= 0) {
+          if (shouldSave) alert("Please enter a valid charge rate.");
+          return;
+        }
+
+        const pricePerKwh = parseFloat(
+          document.getElementById("pricePerKwh").value
+        );
+        const showCost = !isNaN(pricePerKwh) && pricePerKwh > 0;
+
+        if (shouldSave) {
+          saveState(startTime);
+        }
+
+        const headerRow = document.getElementById("headerRow");
+        if (showCost) {
+          headerRow.innerHTML = `
+            <th scope="col">Time</th>
+            <th scope="col">Level</th>
+            <th scope="col">Energy</th>
+            <th scope="col">Range</th>
+            <th scope="col">Cost</th>
+          `;
+        } else {
+          headerRow.innerHTML = `
+            <th scope="col">Time</th>
+            <th scope="col">Level</th>
+            <th scope="col">Energy</th>
+            <th scope="col">Range</th>
+          `;
+        }
+
+        const startKwh = (startSoc / 100) * capacity;
+        let currentKwh = startKwh;
+        const tbody = document.querySelector("#resultTable tbody");
+        tbody.innerHTML = "";
+
+        // Time increment based on charge rate
+        let incrementMinutes;
+        if (chargeRate < 2) {
+          incrementMinutes = 60;
+        } else if (chargeRate < 50) {
+          incrementMinutes = 30;
+        } else {
+          incrementMinutes = 15;
+        }
+
+        const incrementHours = incrementMinutes / 60;
+        const energyPerIncrement = chargeRate * incrementHours;
+        const maxIterations = 24;
+
+        let timeTracker = new Date(startTime.getTime());
+
+        for (let i = 1; i <= maxIterations; i++) {
+          currentKwh += energyPerIncrement;
+          timeTracker.setMinutes(timeTracker.getMinutes() + incrementMinutes);
+
+          let isFull = false;
+
+          if (currentKwh >= capacity) {
+            currentKwh = capacity;
+            isFull = true;
+          }
+
+          const percentage = (currentKwh / capacity) * 100;
+          const currentRange = (currentKwh / capacity) * maxRange;
+          const energyAdded = currentKwh - startKwh;
+          const cost = energyAdded * pricePerKwh;
+
+          const rowClass = isFull ? 'class="full-charge-row"' : "";
+          const statusIcon = isFull ? "🔋" : "⚡";
+
+          const totalMinutes = i * incrementMinutes;
+          const hours = Math.floor(totalMinutes / 60);
+          const minutes = totalMinutes % 60;
+          let timeLabel;
+          if (minutes === 0) {
+            timeLabel = `+${hours} hr`;
+          } else if (hours === 0) {
+            timeLabel = `+${minutes} min`;
+          } else {
+            timeLabel = `+${hours}:${String(minutes).padStart(2, "0")}`;
+          }
+
+          const timeString = `${timeLabel} <br><small>(${formatTime(
+            timeTracker
+          )})</small>`;
+
+          const costCell = showCost ? `<td>$${cost.toFixed(2)}</td>` : "";
+
+          const row = `
+                <tr ${rowClass}>
+                    <th scope="row">${timeString}</th>
+                    <td>${statusIcon} ${percentage.toFixed(1)}%</td>
+                    <td>${currentKwh.toFixed(1)} kWh</td>
+                    <td>${Math.round(currentRange)} mi</td>
+                    ${costCell}
+                </tr>
+            `;
+          tbody.innerHTML += row;
+
+          if (isFull) break;
+        }
+      }
+    </script>
+  </body>
+</html>
