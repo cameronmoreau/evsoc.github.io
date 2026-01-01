@@ -153,7 +153,7 @@
             </div>
           </div>
           <div id="chartContainer"></div>
-          <table role="grid" id="resultTable">
+          <table role="grid" id="resultTable" class="striped">
             <thead>
               <tr id="headerRow">
                 <th scope="col">Time</th>
@@ -490,7 +490,6 @@
           chartData.energyValues.push(currentKwh);
 
           const rowClass = isFull ? 'class="full-charge-row"' : "";
-          const statusIcon = isFull ? "🔋" : "⚡";
 
           const totalMinutes = i * incrementMinutes;
           const hours = Math.floor(totalMinutes / 60);
@@ -513,7 +512,7 @@
           const row = `
                 <tr ${rowClass}>
                     <th scope="row">${timeString}</th>
-                    <td>${statusIcon} ${percentage.toFixed(1)}%</td>
+                    <td>${percentage.toFixed(1)}%</td>
                     <td>${currentKwh.toFixed(1)} kWh</td>
                     <td>${Math.round(currentRange)} mi</td>
                     ${costCell}
