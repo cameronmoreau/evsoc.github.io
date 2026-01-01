@@ -8,6 +8,16 @@
       rel="stylesheet"
       href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css"
     />
+    <noscript>
+      <link
+        rel="stylesheet"
+        href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css"
+      />
+    </noscript>
+    <script
+      src="https://cdn.jsdelivr.net/npm/frappe-charts@1.6.2/dist/frappe-charts.min.umd.js"
+      async
+    ></script>
     <style>
       .full-charge-row {
         background-color: rgba(40, 167, 69, 0.15);
@@ -32,6 +42,27 @@
       article > footer > table th,
       article > footer > table td {
         padding: 0.75rem;
+      }
+      #chartContainer {
+        display: none;
+        min-height: 300px;
+        padding: 1rem;
+      }
+      #chartContainer .legend-dataset-text {
+        fill: rgba(255, 255, 255, 0.85);
+      }
+      #chartContainer .title {
+        fill: rgba(255, 255, 255, 0.9);
+      }
+      #chartContainer.visible {
+        display: block;
+      }
+      #resultTable.hidden {
+        display: none;
+      }
+      #viewToggle button {
+        padding: 0.4rem 0.75rem;
+        font-size: 0.8rem;
       }
     </style>
   </head>
@@ -113,6 +144,15 @@
         </form>
 
         <footer>
+          <div style="padding: 1rem 1rem 0">
+            <div role="group" id="viewToggle">
+              <button type="button" onclick="showView('table')">Table</button>
+              <button type="button" class="outline" onclick="showView('chart')">
+                Chart
+              </button>
+            </div>
+          </div>
+          <div id="chartContainer"></div>
           <table role="grid" id="resultTable">
             <thead>
               <tr id="headerRow">
@@ -149,6 +189,71 @@
     </main>
 
     <script>
+      // Chart instance and data
+      let chargeChart = null;
+      let chartData = {
+        labels: [],
+        socValues: [],
+        rangeValues: [],
+        energyValues: [],
+      };
+
+      function showView(view) {
+        const tableEl = document.getElementById("resultTable");
+        const chartEl = document.getElementById("chartContainer");
+        const buttons = document.querySelectorAll("#viewToggle button");
+
+        if (view === "chart") {
+          tableEl.classList.add("hidden");
+          chartEl.classList.add("visible");
+          buttons[0].classList.add("outline");
+          buttons[1].classList.remove("outline");
+          renderChart();
+        } else {
+          tableEl.classList.remove("hidden");
+          chartEl.classList.remove("visible");
+          buttons[0].classList.remove("outline");
+          buttons[1].classList.add("outline");
+        }
+      }
+
+      function renderChart() {
+        if (chartData.labels.length === 0) return;
+
+        const chartContainer = document.getElementById("chartContainer");
+        chartContainer.innerHTML = "";
+
+        chargeChart = new frappe.Chart(chartContainer, {
+          title: "Charging Progress",
+          data: {
+            labels: chartData.labels,
+            datasets: [
+              {
+                name: "Charge %",
+                values: chartData.socValues,
+                chartType: "line",
+              },
+            ],
+          },
+          type: "line",
+          height: 280,
+          colors: ["#28a745"],
+          lineOptions: {
+            regionFill: 1,
+            hideDots: 0,
+            dotSize: 4,
+          },
+          axisOptions: {
+            xAxisMode: "tick",
+            xIsSeries: true,
+          },
+          tooltipOptions: {
+            formatTooltipX: (d) => d,
+            formatTooltipY: (d) => d.toFixed(1) + "%",
+          },
+        });
+      }
+
       // Vehicle definitions - add new vehicles here
       const vehicleData = {
         RivianStandard: { name: "Rivian Standard", capacity: 106, range: 258 },
@@ -332,6 +437,20 @@
         const tbody = document.querySelector("#resultTable tbody");
         tbody.innerHTML = "";
 
+        // Reset chart data
+        chartData = {
+          labels: [],
+          socValues: [],
+          rangeValues: [],
+          energyValues: [],
+        };
+
+        // Add starting point
+        chartData.labels.push(formatTime(startTime));
+        chartData.socValues.push(startSoc);
+        chartData.rangeValues.push((startSoc / 100) * maxRange);
+        chartData.energyValues.push(startKwh);
+
         // Time increment based on charge rate
         let incrementMinutes;
         if (chargeRate < 2) {
@@ -363,6 +482,12 @@
           const currentRange = (currentKwh / capacity) * maxRange;
           const energyAdded = currentKwh - startKwh;
           const cost = energyAdded * pricePerKwh;
+
+          // Store chart data
+          chartData.labels.push(formatTime(timeTracker));
+          chartData.socValues.push(percentage);
+          chartData.rangeValues.push(currentRange);
+          chartData.energyValues.push(currentKwh);
 
           const rowClass = isFull ? 'class="full-charge-row"' : "";
           const statusIcon = isFull ? "🔋" : "⚡";
@@ -397,6 +522,16 @@
           tbody.innerHTML += row;
 
           if (isFull) break;
+        }
+
+        // Show the view toggle and update chart if visible
+        document.getElementById("viewToggle").style.display = "flex";
+        if (
+          document
+            .getElementById("chartContainer")
+            .classList.contains("visible")
+        ) {
+          renderChart();
         }
       }
     </script>
